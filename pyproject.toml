@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deskpad-vision"
+version = "0.1.0"
+description = "Turn the palm-rest areas beside a MacBook trackpad into camera-tracked virtual touch surfaces."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  # 0.10.35 removed the legacy Solutions API used by this lightweight prototype.
+  "mediapipe>=0.10.14,<=0.10.21",
+  "numpy>=1.24,<2",
+  "opencv-contrib-python>=4.9,<4.12",
+  "pyobjc-framework-Quartz>=10.2; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6,<1",
+]
+
+[project.scripts]
+deskpad = "deskpad_vision.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["UP006", "UP035", "UP037", "UP045"]
