@@ -3,7 +3,7 @@ import unittest
 import cv2
 import numpy as np
 
-from deskpad_vision.alignment import KeyboardAligner
+from deskpad_vision.alignment import AlignmentResult, KeyboardAligner, LockedAlignmentGuard
 from deskpad_vision.geometry import apply_homography
 
 
@@ -38,11 +38,41 @@ class AlignmentTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
+        self.assertIsNotNone(result.stable_current_to_reference)
         source_point = apply_homography((320.0, 100.0), reference_to_current)
         assert source_point is not None
         recovered = apply_homography(source_point, result.current_to_reference)
         assert recovered is not None
         self.assertLess(np.linalg.norm(np.array(recovered) - np.array((320.0, 100.0))), 3.0)
+
+    def test_v2_guard_locks_startup_transform_and_rejects_later_drift(self) -> None:
+        guard = LockedAlignmentGuard(
+            width=1280,
+            keyboard_rect=(0, 0, 1280, 60),
+            max_drift=8.0,
+            acquire_frames=3,
+            release_frames=2,
+        )
+
+        def result(matrix: np.ndarray) -> AlignmentResult:
+            return AlignmentResult(matrix, 60, 45, 0.5, 0.9, np.zeros((45, 2)))
+
+        startup_transform = np.array(
+            [[0.999, -0.018, 37.0], [0.018, 0.999, -11.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        self.assertFalse(guard.update(result(startup_transform)))
+        self.assertFalse(guard.update(result(startup_transform)))
+        self.assertTrue(guard.update(result(startup_transform)))
+        locked = guard.preview_result(result(startup_transform))
+        np.testing.assert_allclose(locked.current_to_reference, startup_transform)
+
+        moved = np.array(
+            [[0.999, -0.018, 61.0], [0.018, 0.999, -11.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        self.assertTrue(guard.update(result(moved)))
+        self.assertFalse(guard.update(result(moved)))
 
 
 if __name__ == "__main__":

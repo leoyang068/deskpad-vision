@@ -1,5 +1,9 @@
 .DS_Store
 .venv/
+.calibration-venv*/
+.python-runtimes/
+.model-cache/
+.models/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -9,4 +13,3 @@ build/
 dist/
 *.egg-info/
 .deskpad-profile/
-

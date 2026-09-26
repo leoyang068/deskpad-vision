@@ -17,6 +17,111 @@ class AlignmentResult:
     median_error: float
     confidence: float
     current_inliers: np.ndarray
+    stable_current_to_reference: Optional[np.ndarray] = None
+
+
+class LockedAlignmentGuard:
+    """Acquire one stable V2 relock transform, then use matching as a drift alarm.
+
+    A homography estimated from a narrow keyboard band is poorly constrained when
+    extrapolated over the palm rest. V2 instead estimates a restricted similarity
+    transform, confirms it across several frames, and freezes that transform for
+    the session. Several bad or displaced frames release the pointer lock.
+    """
+
+    def __init__(
+        self,
+        width: int,
+        keyboard_rect: Rect,
+        max_drift: float = 8.0,
+        acquire_frames: int = 3,
+        release_frames: int = 2,
+    ) -> None:
+        x, y, rect_width, rect_height = keyboard_rect
+        self.sample_points = np.float32(
+            [
+                [x + rect_width * 0.18, y + rect_height * 0.30],
+                [x + rect_width * 0.50, y + rect_height * 0.30],
+                [x + rect_width * 0.82, y + rect_height * 0.30],
+                [x + rect_width * 0.28, y + rect_height * 0.72],
+                [x + rect_width * 0.72, y + rect_height * 0.72],
+            ]
+        )
+        self.width = width
+        self.max_drift = max_drift
+        self.acquire_frames = acquire_frames
+        self.release_frames = release_frames
+        self.good_streak = 0
+        self.bad_streak = 0
+        self.locked = False
+        self.last_drift: Optional[float] = None
+        self.baseline_matrix: Optional[np.ndarray] = None
+        self._acquisition_matrices: list[np.ndarray] = []
+
+    @staticmethod
+    def _candidate_matrix(result: AlignmentResult) -> np.ndarray:
+        if result.stable_current_to_reference is not None:
+            return result.stable_current_to_reference
+        return result.current_to_reference
+
+    def _matrix_drift(self, first: np.ndarray, second: np.ndarray) -> float:
+        points = self.sample_points.reshape(-1, 1, 2)
+        first_mapped = cv2.perspectiveTransform(points, first).reshape(-1, 2)
+        second_mapped = cv2.perspectiveTransform(points, second).reshape(-1, 2)
+        return float(np.max(np.linalg.norm(first_mapped - second_mapped, axis=1)))
+
+    def update(self, result: Optional[AlignmentResult]) -> bool:
+        good = False
+        self.last_drift = None
+        if result is not None:
+            candidate = self._candidate_matrix(result)
+            if np.all(np.isfinite(candidate)):
+                if self.baseline_matrix is None:
+                    if self._acquisition_matrices:
+                        reference = self._acquisition_matrices[0]
+                        self.last_drift = self._matrix_drift(candidate, reference)
+                        good = self.last_drift <= self.max_drift
+                    else:
+                        self.last_drift = 0.0
+                        good = True
+                    if good:
+                        self._acquisition_matrices.append(candidate.copy())
+                else:
+                    self.last_drift = self._matrix_drift(candidate, self.baseline_matrix)
+                    good = self.last_drift <= self.max_drift
+
+        if good:
+            self.good_streak += 1
+            self.bad_streak = 0
+            if self.baseline_matrix is None and self.good_streak >= self.acquire_frames:
+                stacked = np.stack(self._acquisition_matrices[-self.acquire_frames :], axis=0)
+                self.baseline_matrix = np.median(stacked, axis=0)
+                self.baseline_matrix[2] = (0.0, 0.0, 1.0)
+                self.locked = True
+            elif self.baseline_matrix is not None:
+                self.locked = True
+        else:
+            self.bad_streak += 1
+            self.good_streak = 0
+            if self.baseline_matrix is None:
+                self._acquisition_matrices.clear()
+            if self.bad_streak >= self.release_frames:
+                self.locked = False
+        return self.locked
+
+    def preview_result(self, result: AlignmentResult) -> AlignmentResult:
+        matrix = self.baseline_matrix
+        if matrix is None:
+            matrix = self._candidate_matrix(result)
+        return AlignmentResult(
+            current_to_reference=matrix.copy(),
+            match_count=result.match_count,
+            inlier_count=result.inlier_count,
+            median_error=result.median_error,
+            confidence=result.confidence,
+            current_inliers=result.current_inliers,
+            stable_current_to_reference=matrix.copy(),
+        )
 
 
 class KeyboardAligner:
@@ -125,6 +230,21 @@ class KeyboardAligner:
         if not self._is_sane(matrix, current_bgr.shape[1], current_bgr.shape[0]):
             return None
 
+        stable_matrix = None
+        affine, _affine_inliers = cv2.estimateAffinePartial2D(
+            current_points[inliers].reshape(-1, 2),
+            reference_points[inliers].reshape(-1, 2),
+            method=cv2.RANSAC,
+            ransacReprojThreshold=3.0,
+            maxIters=2000,
+            confidence=0.995,
+            refineIters=10,
+        )
+        if affine is not None and np.all(np.isfinite(affine)):
+            candidate = np.vstack([affine, np.array([0.0, 0.0, 1.0])])
+            if self._is_sane(candidate, current_bgr.shape[1], current_bgr.shape[0]):
+                stable_matrix = candidate
+
         inlier_ratio = inlier_count / max(1, len(good))
         count_score = min(1.0, inlier_count / 45.0)
         error_score = max(0.0, 1.0 - median_error / self.max_median_error)
@@ -136,6 +256,7 @@ class KeyboardAligner:
             median_error=median_error,
             confidence=confidence,
             current_inliers=current_points[inliers].reshape(-1, 2),
+            stable_current_to_reference=stable_matrix,
         )
 
     @staticmethod

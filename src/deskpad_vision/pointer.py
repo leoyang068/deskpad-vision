@@ -9,13 +9,34 @@ Point = Tuple[float, float]
 class PointerSink(Protocol):
     def move_relative(self, dx: float, dy: float) -> None: ...
 
+    def left_click(self) -> None: ...
+
+    def left_down(self) -> None: ...
+
+    def left_up(self) -> None: ...
+
 
 class NullPointerSink:
     def __init__(self) -> None:
         self.last_delta: Point = (0.0, 0.0)
+        self.events: list[str] = []
+        self.left_is_down = False
 
     def move_relative(self, dx: float, dy: float) -> None:
         self.last_delta = (dx, dy)
+
+    def left_click(self) -> None:
+        self.events.append("click")
+
+    def left_down(self) -> None:
+        if not self.left_is_down:
+            self.left_is_down = True
+            self.events.append("down")
+
+    def left_up(self) -> None:
+        if self.left_is_down:
+            self.left_is_down = False
+            self.events.append("up")
 
 
 class MacPointerSink:
@@ -26,6 +47,9 @@ class MacPointerSink:
                 CGEventCreateMouseEvent,
                 CGEventGetLocation,
                 CGEventPost,
+                kCGEventLeftMouseDown,
+                kCGEventLeftMouseDragged,
+                kCGEventLeftMouseUp,
                 kCGEventMouseMoved,
                 kCGHIDEventTap,
                 kCGMouseButtonLeft,
@@ -39,15 +63,43 @@ class MacPointerSink:
         self._get_location = CGEventGetLocation
         self._post = CGEventPost
         self._mouse_moved = kCGEventMouseMoved
+        self._left_mouse_down = kCGEventLeftMouseDown
+        self._left_mouse_up = kCGEventLeftMouseUp
+        self._left_mouse_dragged = kCGEventLeftMouseDragged
         self._event_tap = kCGHIDEventTap
         self._left_button = kCGMouseButtonLeft
+        self.left_is_down = False
+
+    def _post_at_current_location(self, event_type: int) -> None:
+        source_event = self._create_event(None)
+        current = self._get_location(source_event)
+        location = (float(current.x), float(current.y))
+        event = self._create_mouse_event(None, event_type, location, self._left_button)
+        self._post(self._event_tap, event)
 
     def move_relative(self, dx: float, dy: float) -> None:
         source_event = self._create_event(None)
         current = self._get_location(source_event)
         target = (float(current.x + dx), float(current.y + dy))
-        event = self._create_mouse_event(None, self._mouse_moved, target, self._left_button)
+        event_type = self._left_mouse_dragged if self.left_is_down else self._mouse_moved
+        event = self._create_mouse_event(None, event_type, target, self._left_button)
         self._post(self._event_tap, event)
+
+    def left_click(self) -> None:
+        self._post_at_current_location(self._left_mouse_down)
+        self._post_at_current_location(self._left_mouse_up)
+
+    def left_down(self) -> None:
+        if self.left_is_down:
+            return
+        self._post_at_current_location(self._left_mouse_down)
+        self.left_is_down = True
+
+    def left_up(self) -> None:
+        if not self.left_is_down:
+            return
+        self._post_at_current_location(self._left_mouse_up)
+        self.left_is_down = False
 
 
 @dataclass

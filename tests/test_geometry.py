@@ -4,11 +4,17 @@ from pathlib import Path
 
 import numpy as np
 
+from deskpad_vision.app import _clamp_roi, _default_trackpad_roi, _rect_from_points
 from deskpad_vision.config import Profile
 from deskpad_vision.geometry import ActiveZones, apply_homography
 
 
 class GeometryTests(unittest.TestCase):
+    def test_trackpad_roi_helpers(self) -> None:
+        self.assertEqual(_rect_from_points((80, 90), (20, 30)), (20, 30, 60, 60))
+        self.assertEqual(_clamp_roi((-5, 90, 60, 40), 100, 100), (0, 60, 60, 40))
+        self.assertEqual(_default_trackpad_roi(1000, 600), (290, 357, 420, 228))
+
     def test_homography_maps_point(self) -> None:
         matrix = np.array([[2.0, 0.0, 10.0], [0.0, 3.0, -5.0], [0.0, 0.0, 1.0]])
         self.assertEqual(apply_homography((4.0, 5.0), matrix), (18.0, 10.0))

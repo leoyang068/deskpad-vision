@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deskpad-vision"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn the palm-rest areas beside a MacBook trackpad into camera-tracked virtual touch surfaces."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -13,6 +13,8 @@ dependencies = [
   "mediapipe>=0.10.14,<=0.10.21",
   "numpy>=1.24,<2",
   "opencv-contrib-python>=4.9,<4.12",
+  "Pillow>=10,<13",
+  "pyobjc-framework-AVFoundation>=10.2; sys_platform == 'darwin'",
   "pyobjc-framework-Quartz>=10.2; sys_platform == 'darwin'",
 ]
 
